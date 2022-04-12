@@ -1,80 +1,208 @@
-#TODO: Import your dependencies.
-#For instance, below are some dependencies you might need if you are using Pytorch
 import numpy as np
+import pandas as pd
 import torch
+import os
 import torch.nn as nn
 import torch.optim as optim
 import torchvision
 import torchvision.models as models
 import torchvision.transforms as transforms
+from torchvision.io import read_image
+from torch.utils.data import Dataset, DataLoader
 
 import argparse
-
-def test(model, test_loader):
-    '''
-    TODO: Complete this function that can take a model and a 
-          testing data loader and will get the test accuray/loss of the model
-          Remember to include any debugging/profiling hooks that you might need
-    '''
-    pass
-
-def train(model, train_loader, criterion, optimizer):
-    '''
-    TODO: Complete this function that can take a model and
-          data loaders for training and will get train the model
-          Remember to include any debugging/profiling hooks that you might need
-    '''
-    pass
     
-def net():
+def test(model, test_loader, criterion, device):
     '''
-    TODO: Complete this function that initializes your model
-          Remember to use a pretrained model
-    '''
-    pass
+    This function takes a model and a testing data loader and will get the test accuray/loss of the model
+    '''    
+    print("Testing Model on Whole Testing Dataset")
+    model.eval()
+    running_loss=0
+    running_corrects=0
+    
+    for inputs, labels in test_loader:
+        inputs=inputs.to(device)
+        labels=labels.to(device)
+        outputs=model(inputs)
+        loss=criterion(outputs, labels)
+        _, preds = torch.max(outputs, 1)
+        running_loss += loss.item() * inputs.size(0)
+        running_corrects += torch.sum(preds == labels.data).item()
 
-def create_data_loaders(data, batch_size):
+    total_loss = running_loss / len(test_loader.dataset)
+    total_acc = running_corrects/ len(test_loader.dataset)
+    print(f"Testing Accuracy: {100*total_acc}")    
+    print(f"Testing Loss: {total_loss}")    
+
+def train(model, image_dataset_loaders, criterion, optimizer, device):
     '''
-    This is an optional function that you may or may not need to implement
-    depending on whether you need to use data loaders or not
+    This function takes a model and data loaders for training and will get train the model
+    '''    
+    epochs=2
+    best_loss=1e6
+    loss_counter=0
+    
+    for epoch in range(epochs):
+        for phase in ['train', 'valid']:
+            print(f"Epoch {epoch}, Phase {phase}")
+            if phase=='train':
+                model.train()
+            else:
+                model.eval()
+            running_loss = 0.0
+            running_corrects = 0
+            running_samples=0
+
+            for step, (inputs, labels) in enumerate(image_dataset_loaders[phase]):
+                inputs=inputs.to(device)
+                labels=labels.to(device)
+                outputs = model(inputs)
+                loss = criterion(outputs, labels)
+
+                if phase=='train':
+                    optimizer.zero_grad()
+                    loss.backward()
+                    optimizer.step()
+
+                _, preds = torch.max(outputs, 1)
+                running_loss += loss.item() * inputs.size(0)
+                running_corrects += torch.sum(preds == labels.data).item()
+                running_samples+=len(inputs)
+                if running_samples % 2000  == 0:
+                    accuracy = running_corrects/running_samples
+                    print("Images [{}/{} ({:.0f}%)] Loss: {:.2f} Accuracy: {}/{} ({:.2f}%)".format(
+                            running_samples,
+                            len(image_dataset_loaders[phase].dataset),
+                            100.0 * (running_samples / len(image_dataset_loaders[phase].dataset)),
+                            loss.item(),
+                            running_corrects,
+                            running_samples,
+                            100.0*accuracy,
+                        )
+                    )
+                
+                #NOTE: Comment lines below to train and test on whole dataset
+                if running_samples>(0.2*len(image_dataset_loaders[phase].dataset)):
+                    break
+
+            epoch_loss = running_loss / running_samples
+            epoch_acc = running_corrects / running_samples
+            
+            if phase=='valid':
+                if epoch_loss<best_loss:
+                    best_loss=epoch_loss
+                else:
+                    loss_counter+=1
+
+        if loss_counter==1:
+            break
+    return model
+    
+def create_pretrained_model():
     '''
-    pass
+    Create pretrained resnet50 model
+    When creating our model we need to freeze all the convolutional layers which we do by their requires_grad() attribute to False. 
+    We also need to add a fully connected layer on top of it which we do use the Sequential API.
+    '''
+    model = models.resnet50(pretrained=True, progress=True)
+
+    for param in model.parameters():
+        param.requires_grad = False   
+
+    num_features=model.fc.in_features
+    model.fc = nn.Sequential(nn.Linear(num_features, 133))
+    return model
+
+class DogBreedDataset(Dataset):
+    def __init__(self, annotations_file, base_dir, transform=None, target_transform=None):
+        self.img_labels = pd.read_csv(annotations_file)
+        self.base_dir = base_dir
+        self.transform = transform
+        self.target_transform = target_transform
+
+    def __len__(self):
+        return len(self.img_labels)
+
+    def __getitem__(self, idx):
+        img_path = os.path.join(self.base_dir, self.img_labels.iloc[idx, 1])
+        image = read_image(img_path)
+        label = int(self.img_labels.iloc[idx, 0])
+        if self.transform:
+            image = self.transform(image)
+        if self.target_transform:
+            label = self.target_transform(label)
+        return image, label
 
 def main(args):
+    print(f"Main Arguments {args}")
     '''
-    TODO: Initialize a model by calling the net function
+    Initialize pretrained model
     '''
-    model=net()
+    model=create_pretrained_model()
+    
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    print(f"Running on Device {device}")
     
     '''
-    TODO: Create your loss and optimizer
+    Create data loaders
     '''
-    loss_criterion = None
-    optimizer = None
+    mean = [0.485, 0.456, 0.406]
+    std = [0.229, 0.224, 0.225]
+    image_transform = transforms.Compose([
+        transforms.Resize([256, ]),
+        transforms.CenterCrop(224),
+        transforms.ConvertImageDtype(torch.float),
+        transforms.Normalize(mean=mean, std=std)])
+    train_data = DogBreedDataset(annotations_file = 'dogImages/train/meta.csv', base_dir = '.', transform = image_transform)
+    test_data = DogBreedDataset(annotations_file = 'dogImages/test/meta.csv', base_dir = '.', transform = image_transform)
+    valid_data = DogBreedDataset(annotations_file = 'dogImages/valid/meta.csv', base_dir = '.', transform = image_transform)
+
+    train_loader = DataLoader(train_data, batch_size=args.batch_size, shuffle=True)
+    test_loader = DataLoader(test_data, batch_size=args.batch_size, shuffle=True)
+    valid_loader = DataLoader(valid_data, batch_size=args.batch_size, shuffle=True)
+    
+    image_dataset_loaders={'train':train_loader, 'valid':valid_loader}
     
     '''
-    TODO: Call the train function to start training your model
-    Remember that you will need to set up a way to get training data from S3
+    Create loss and optimizer
     '''
-    model=train(model, train_loader, loss_criterion, optimizer)
+    loss_criterion = nn.CrossEntropyLoss()
+    optimizer = optim.Adam(model.fc.parameters(), lr=args.lr)
     
     '''
-    TODO: Test the model to see its accuracy
+    Call the train function to start training model
     '''
-    test(model, test_loader, criterion)
+    model=train(model, image_dataset_loaders, loss_criterion, optimizer, device)
     
     '''
-    TODO: Save the trained model
+    Test the model to see its accuracy
+    '''
+    test(model, test_loader, criterion, device)
+    
+    '''
+    Save the trained model
     '''
     torch.save(model, path)
 
 if __name__=='__main__':
     parser=argparse.ArgumentParser()
     '''
-    TODO: Specify all the hyperparameters you need to use to train your model.
+    All the hyperparameters needed to use to train your model.
     '''
-    
-    args=parser.parse_args()
+    # Training settings
+    parser = argparse.ArgumentParser(description="Udacity AWS ML project 3 - HPO tuning")
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=64,
+        metavar="N",
+        help="input batch size for training (default: 64)",
+    )
+    parser.add_argument(
+        "--lr", type=float, default=1.0, metavar="LR", help="learning rate (default: 1.0)"
+    )
+    args = parser.parse_args()
     
     main(args)
 
@@ -205,3 +333,140 @@ if __name__=='__main__':
 
 # if __name__ == "__main__":
 #     main()    
+
+# import torch
+# import torch.nn as nn
+# import torch.optim as optim
+# from torch.optim import lr_scheduler
+# import torchvision
+# from torchvision import datasets, models, transforms
+# import time # for measuring time for testing, remove for students
+
+# def test(model, test_loader, criterion, device):
+#     print("Testing Model on Whole Testing Dataset")
+#     model.eval()
+#     running_loss=0
+#     running_corrects=0
+    
+#     for inputs, labels in test_loader:
+#         inputs=inputs.to(device)
+#         labels=labels.to(device)
+#         outputs=model(inputs)
+#         loss=criterion(outputs, labels)
+#         _, preds = torch.max(outputs, 1)
+#         running_loss += loss.item() * inputs.size(0)
+#         running_corrects += torch.sum(preds == labels.data).item()
+
+#     total_loss = running_loss / len(test_loader.dataset)
+#     total_acc = running_corrects/ len(test_loader.dataset)
+#     print(f"Testing Accuracy: {100*total_acc}, Testing Loss: {total_loss}")
+    
+# def train(model, train_loader, validation_loader, criterion, optimizer, device):
+#     epochs=2
+#     best_loss=1e6
+#     image_dataset={'train':train_loader, 'valid':validation_loader}
+#     loss_counter=0
+    
+#     for epoch in range(epochs):
+#         for phase in ['train', 'valid']:
+#             print(f"Epoch {epoch}, Phase {phase}")
+#             if phase=='train':
+#                 model.train()
+#             else:
+#                 model.eval()
+#             running_loss = 0.0
+#             running_corrects = 0
+#             running_samples=0
+
+#             for step, (inputs, labels) in enumerate(image_dataset[phase]):
+#                 inputs=inputs.to(device)
+#                 labels=labels.to(device)
+#                 outputs = model(inputs)
+#                 loss = criterion(outputs, labels)
+
+#                 if phase=='train':
+#                     optimizer.zero_grad()
+#                     loss.backward()
+#                     optimizer.step()
+
+#                 _, preds = torch.max(outputs, 1)
+#                 running_loss += loss.item() * inputs.size(0)
+#                 running_corrects += torch.sum(preds == labels.data).item()
+#                 running_samples+=len(inputs)
+#                 if running_samples % 2000  == 0:
+#                     accuracy = running_corrects/running_samples
+#                     print("Images [{}/{} ({:.0f}%)] Loss: {:.2f} Accuracy: {}/{} ({:.2f}%)".format(
+#                             running_samples,
+#                             len(image_dataset[phase].dataset),
+#                             100.0 * (running_samples / len(image_dataset[phase].dataset)),
+#                             loss.item(),
+#                             running_corrects,
+#                             running_samples,
+#                             100.0*accuracy,
+#                         )
+#                     )
+                
+#                 #NOTE: Comment lines below to train and test on whole dataset
+#                 if running_samples>(0.2*len(image_dataset[phase].dataset)):
+#                     break
+
+#             epoch_loss = running_loss / running_samples
+#             epoch_acc = running_corrects / running_samples
+            
+#             if phase=='valid':
+#                 if epoch_loss<best_loss:
+#                     best_loss=epoch_loss
+#                 else:
+#                     loss_counter+=1
+
+#         if loss_counter==1:
+#             break
+#     return model
+
+# def create_model():
+#     model = models.resnet18(pretrained=True)
+
+#     for param in model.parameters():
+#         param.requires_grad = False   
+
+#     num_features=model.fc.in_features
+#     model.fc = nn.Sequential(
+#                    nn.Linear(num_features, 10))
+#     return model
+
+# batch_size=10
+# device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+# print(f"Running on Device {device}")
+
+# training_transform = transforms.Compose([
+#     transforms.RandomHorizontalFlip(p=0.5),
+#     transforms.Resize(224),
+#     transforms.ToTensor(),
+#     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])])
+
+# testing_transform = transforms.Compose([
+#     transforms.Resize(224),
+#     transforms.ToTensor(),
+#     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])])
+
+# trainset = torchvision.datasets.CIFAR10(root='./data', train=True,
+#         download=True, transform=training_transform)
+
+# trainloader = torch.utils.data.DataLoader(trainset, batch_size=batch_size,
+#         shuffle=True)
+
+# testset = torchvision.datasets.CIFAR10(root='./data', train=False,
+#         download=True, transform=testing_transform)
+
+# testloader = torch.utils.data.DataLoader(testset, batch_size=batch_size,
+#         shuffle=False)
+
+# model=create_model()
+# model=model.to(device)
+
+# criterion = nn.CrossEntropyLoss()
+# optimizer = optim.Adam(model.fc.parameters(), lr=0.001)
+
+# train(model, trainloader, testloader, criterion, optimizer, device)
+
+# test(model, testloader, criterion, device)
