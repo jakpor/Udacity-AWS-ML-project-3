@@ -11,6 +11,7 @@ from torchvision.io import read_image
 from torch.utils.data import Dataset, DataLoader
 
 import argparse
+import csv
     
 def test(model, test_loader, criterion, device):
     '''
@@ -69,7 +70,7 @@ def train(model, image_dataset_loaders, criterion, optimizer, device):
                 running_loss += loss.item() * inputs.size(0)
                 running_corrects += torch.sum(preds == labels.data).item()
                 running_samples+=len(inputs)
-                if running_samples % 2000  == 0:
+                if running_samples % 10  == 0:
                     accuracy = running_corrects/running_samples
                     print("Images [{}/{} ({:.0f}%)] Loss: {:.2f} Accuracy: {}/{} ({:.2f}%)".format(
                             running_samples,
@@ -83,7 +84,7 @@ def train(model, image_dataset_loaders, criterion, optimizer, device):
                     )
                 
                 #NOTE: Comment lines below to train and test on whole dataset
-                if running_samples>(0.2*len(image_dataset_loaders[phase].dataset)):
+                if running_samples>(0.1*len(image_dataset_loaders[phase].dataset)):
                     break
 
             epoch_loss = running_loss / running_samples
@@ -134,8 +135,30 @@ class DogBreedDataset(Dataset):
             label = self.target_transform(label)
         return image, label
 
+def load_data():
+    print('Downloading data')
+    url = 'https://s3-us-west-1.amazonaws.com/udacity-aind/dog-project/dogImages.zip'
+    os.system(f"wget -c --read-timeout=5 --tries=0 {url}")    
+    
+    print('Download successful. Unzipping data')
+    os.system(f"unzip -n -q dogImages.zip")
+    print('Unzipping succesfull')
+
+def create_metadata(database_path):
+    with open(os.path.join(database_path, 'meta.csv'), 'w', encoding='UTF8') as output_file:
+        writer = csv.writer(output_file)
+        writer.writerow(['Id', 'Filename'])
+        for root, dirs, files in os.walk(database_path):
+            files.sort()
+            for file in files:
+                if file.lower().endswith('.jpg'):
+                    classification_id = int(root.split("/")[2].split(".")[0])-1
+                    rel_path = os.path.join(root, file)
+                    row = [classification_id, rel_path]
+                    writer.writerow(row)
+    print('Creating metadata completed for file', os.path.join(database_path, 'meta.csv'))
+      
 def main(args):
-    print(f"Main Arguments {args}")
     '''
     Initialize pretrained model
     '''
@@ -147,6 +170,10 @@ def main(args):
     '''
     Create data loaders
     '''
+    load_data()
+    create_metadata('dogImages/test')
+    create_metadata('dogImages/train')
+    create_metadata('dogImages/valid')
     mean = [0.485, 0.456, 0.406]
     std = [0.229, 0.224, 0.225]
     image_transform = transforms.Compose([
@@ -178,12 +205,12 @@ def main(args):
     '''
     Test the model to see its accuracy
     '''
-    test(model, test_loader, criterion, device)
+    test(model, test_loader, loss_criterion, device)
     
     '''
     Save the trained model
     '''
-    torch.save(model, path)
+    torch.save(model, "dog_breed.pt")
 
 if __name__=='__main__':
     parser=argparse.ArgumentParser()
