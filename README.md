@@ -64,7 +64,8 @@ Learning parameters decreased over time as presented in figure below:
 ![Plot of cross entropy over debug samples](training_debug_values.png "Plot of cross entropy over debug samples")
 
 ## Model Deployment
-In order to deploy we need to create additional entrypoint for the network to load and preprocess image. These operations are included in `inference.py` file.
+In order to deploy we need to create additional entrypoint for the network to load and preprocess image. 
+These operations are included in `inference.py` file (not in `train_model.py`!).
 Example of preprocessing procedure is presented in Notebook [`train_and_deploy.ipynb`](train_and_deploy.ipynb). 
 The trained model return correct results for the test image.
 
