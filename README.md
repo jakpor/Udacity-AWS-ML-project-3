@@ -21,6 +21,7 @@ There are 835 validation dog images.
 There are 848 test dog images.
 
 Sample dataset images:
+
 ![sample images in dataset](sample_dataset_images.png "sample images in dataset")
 
 ### Access
@@ -57,6 +58,7 @@ In the Jupiter notebook multiple rules for debugger and profiller were created. 
 Profiler results are located in HTML file [here](ProfilerReport/profiler-output/profiler-report.html).
 
 Learning parameters decreased over time as presented in figure below:
+
 ![Plot of cross entropy over debug samples](training_debug_values.png "Plot of cross entropy over debug samples")
 
 ## Model Deployment
