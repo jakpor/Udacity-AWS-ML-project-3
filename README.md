@@ -57,13 +57,14 @@ In the Jupiter notebook multiple rules for debugger and profiller were created. 
 Profiler results are located in HTML file [here](ProfilerReport/profiler-output/profiler-report.html).
 
 Learning parameters decreased over time as presented in figure below:
+![Plot of cross entropy over debug samples](training_debug_values.png "Plot of cross entropy over debug samples")
 
 ## Model Deployment
 In order to deploy a model one has to run command:
 `predictor = tuner.deploy(initial_instance_count=1, instance_type="ml.m5.xlarge")`
 which will create an endpoint useful for predictions:
 `response = predictor.predict(image)`
-Input image should be preprocessed - i.e. resized to 224x224 image and normalized to match the dataset data. Example of preprocessing procedure is presented in Notebook [`train_and_deploy.ipynb`](train_and_deploy.ipynb).
+Input image should be preprocessed - i.e. resized to 224x224 image and normalized to match the dataset data. Example of preprocessing procedure is presented in Notebook [`train_and_deploy.ipynb`](train_and_deploy.ipynb). The inference should work, but it was aborted due to some latency issues. After facing multiple problems with the AWS cloud I don't know if this is caused by my mistake in the ocde or by the cloud itself. 
 
 A screenshot of the deployed active endpoint in Sagemaker.
 ![A screenshot of the deployed endpoint](deployed_endpoint.png "A screenshot of the deployed endpoint")
@@ -71,4 +72,5 @@ A screenshot of the deployed active endpoint in Sagemaker.
 ## Standout Suggestions
 I tried to train the network on GPU machines and the training procedure was a bit faster, but AWS charged me for these machines so I had to stop experimenting on them. 
 
-The biggest problem with this project was for me to convert the dataset into understandable format for AWS structures. After everything straterd working I found out that the [Stanford Dogs](https://www.tensorflow.org/datasets/catalog/stanford_dogs) dataset is very similar and it is built-in in tensorflow, so handling it would be much easier than the suggested dataset. For reproducing ouside AWS one can used `sklearn.datasets` to download the same dog breed dataset.
+The biggest problem with this project was for me to convert the dataset into understandable format for AWS structures. 
+For reproducing ouside AWS one can used `sklearn.datasets` to download the same dog breed dataset. Also [Stanford Dogs](https://www.tensorflow.org/datasets/catalog/stanford_dogs) dataset is very similar and it is built-in in tensorflow which can be useful for further development.

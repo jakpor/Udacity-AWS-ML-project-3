@@ -12,52 +12,63 @@ from torch.utils.data import Dataset, DataLoader
 
 import argparse
 import csv
-    
+
+# Add this line of you don't want your job to fail unexpected after multiple hours of training
+# https://stackoverflow.com/questions/12984426/pil-ioerror-image-file-truncated-with-big-images
+from PIL import ImageFile
+ImageFile.LOAD_TRUNCATED_IMAGES = True
+
 def test(model, test_loader, criterion, device):
     '''
     This function takes a model and a testing data loader and will get the test accuray/loss of the model
     '''    
-    print("Testing Model on Whole Testing Dataset")
+    print("Testing Model on Whole Testing Dataset")    
     model.eval()
-    running_loss=0
+    running_loss=0.0
     running_corrects=0
     
     for inputs, labels in test_loader:
         inputs=inputs.to(device)
-        labels=labels.to(device)
+        labels=labels.to(device)        
         outputs=model(inputs)
         loss=criterion(outputs, labels)
         _, preds = torch.max(outputs, 1)
-        running_loss += loss.item() * inputs.size(0)
-        running_corrects += torch.sum(preds == labels.data).item()
+        running_loss += float(loss.item() * inputs.size(0))
+        running_corrects += float(torch.sum(preds == labels.data))
 
-    total_loss = running_loss / len(test_loader.dataset)
-    total_acc = running_corrects/ len(test_loader.dataset)
-    print(f"Testing Accuracy: {100*total_acc}")    
-    print(f"Testing Loss: {total_loss}")    
+    total_loss = float(running_loss) // float(len(test_loader.dataset))
+    total_acc = float(running_corrects) // float(len(test_loader.dataset))
+    
+    # here works regexp for "Testing Loss"
+    print(f"Testing Loss: {total_loss}")
+    print(f"Testing Accuracy: {total_acc}")
 
-def train(model, image_dataset_loaders, criterion, optimizer, device):
+def train(model, train_loader, validation_loader, criterion, optimizer, device):
     '''
     This function takes a model and data loaders for training and will get train the model
     '''    
-    epochs=2
-    best_loss=1e6
+    # Number of epochs don't matter here - hpo tuning will be stopped after first epoch (see end of loop)
+    epochs=5
+    best_loss=float(1e6)
+    image_dataset={'train':train_loader, 'valid':validation_loader}
     loss_counter=0
     
     for epoch in range(epochs):
         for phase in ['train', 'valid']:
-            print(f"Epoch {epoch}, Phase {phase}")
+            print(f"Epoch: {epoch}, Phase: {phase}")
             if phase=='train':
                 model.train()
             else:
                 model.eval()
             running_loss = 0.0
-            running_corrects = 0
+            running_corrects = 0.0
             running_samples=0
+            
+            total_samples_in_phase = len(image_dataset[phase].dataset)
 
-            for step, (inputs, labels) in enumerate(image_dataset_loaders[phase]):
+            for inputs, labels in image_dataset[phase]:
                 inputs=inputs.to(device)
-                labels=labels.to(device)
+                labels=labels.to(device)                  
                 outputs = model(inputs)
                 loss = criterion(outputs, labels)
 
@@ -67,28 +78,30 @@ def train(model, image_dataset_loaders, criterion, optimizer, device):
                     optimizer.step()
 
                 _, preds = torch.max(outputs, 1)
-                running_loss += loss.item() * inputs.size(0)
-                running_corrects += torch.sum(preds == labels.data).item()
+                running_loss += float(loss.item() * inputs.size(0))
+                running_corrects += float(torch.sum(preds == labels.data))
                 running_samples+=len(inputs)
-                if running_samples % 10  == 0:
-                    accuracy = running_corrects/running_samples
-                    print("Images [{}/{} ({:.0f}%)] Loss: {:.2f} Accuracy: {}/{} ({:.2f}%)".format(
-                            running_samples,
-                            len(image_dataset_loaders[phase].dataset),
-                            100.0 * (running_samples / len(image_dataset_loaders[phase].dataset)),
-                            loss.item(),
-                            running_corrects,
-                            running_samples,
-                            100.0*accuracy,
-                        )
-                    )
-                
-                #NOTE: Comment lines below to train and test on whole dataset
-                if running_samples>(0.1*len(image_dataset_loaders[phase].dataset)):
-                    break
 
-            epoch_loss = running_loss / running_samples
-            epoch_acc = running_corrects / running_samples
+                accuracy = float(running_corrects)/float(running_samples)
+                print("Epoch {}, Phase {}, Images [{}/{} ({:.0f}%)] Loss: {:.2f} Accuracy: {}/{} ({:.2f}%)".format(
+                        epoch,
+                        phase,
+                        running_samples,
+                        total_samples_in_phase,
+                        100.0 * (float(running_samples) / float(total_samples_in_phase)),
+                        loss.item(),
+                        running_corrects,
+                        running_samples,
+                        100.0*accuracy,
+                    ))
+                 
+                #NOTE: Comment lines below to train and test on whole dataset
+                if (running_samples>(0.1*total_samples_in_phase)):
+                    break
+                
+                
+            epoch_loss = float(running_loss) // float(running_samples)
+            epoch_acc = float(running_corrects) // float(running_samples)
             
             if phase=='valid':
                 if epoch_loss<best_loss:
@@ -96,7 +109,20 @@ def train(model, image_dataset_loaders, criterion, optimizer, device):
                 else:
                     loss_counter+=1
 
+
+            print('{} loss: {:.4f}, acc: {:.4f}, best loss: {:.4f}'.format(phase,
+                                                                           epoch_loss,
+                                                                           epoch_acc,
+                                                                           best_loss)) 
+            
+        # Break training when loss starts to increase. I am not sure if this is required since hpo tuning should handle these issues.
         if loss_counter==1:
+            print("Finish training because epoch loss increased")            
+            break
+        
+        # Comment out these lines if you actually would like to train the model
+        if epoch==0:
+            print("Finish training on Epoch 0")
             break
     return model
     
@@ -111,109 +137,84 @@ def create_pretrained_model():
     for param in model.parameters():
         param.requires_grad = False   
 
-    num_features=model.fc.in_features
-    model.fc = nn.Sequential(nn.Linear(num_features, 133))
+    model.fc = nn.Sequential(
+                   nn.Linear(2048, 128),
+                   nn.ReLU(inplace=True),
+                   nn.Linear(128, 133))
     return model
 
-class DogBreedDataset(Dataset):
-    def __init__(self, annotations_file, base_dir, transform=None, target_transform=None):
-        self.img_labels = pd.read_csv(annotations_file)
-        self.base_dir = base_dir
-        self.transform = transform
-        self.target_transform = target_transform
 
-    def __len__(self):
-        return len(self.img_labels)
+def create_data_loaders(data, batch_size):
+    # Modernized data loaders to skip downloading dataset every time
+    train_data_path = os.path.join(data, 'train')
+    test_data_path = os.path.join(data, 'test')
+    validation_data_path=os.path.join(data, 'valid')
 
-    def __getitem__(self, idx):
-        img_path = os.path.join(self.base_dir, self.img_labels.iloc[idx, 1])
-        image = read_image(img_path)
-        label = int(self.img_labels.iloc[idx, 0])
-        if self.transform:
-            image = self.transform(image)
-        if self.target_transform:
-            label = self.target_transform(label)
-        return image, label
+    train_transform = transforms.Compose([
+        transforms.RandomResizedCrop((224, 224)),
+        transforms.RandomHorizontalFlip(),
+        transforms.ToTensor(),
+        ])
 
-def load_data():
-    print('Downloading data')
-    url = 'https://s3-us-west-1.amazonaws.com/udacity-aind/dog-project/dogImages.zip'
-    os.system(f"wget -c --read-timeout=5 --tries=0 {url}")    
+    test_transform = transforms.Compose([
+        transforms.Resize((224, 224)),
+        transforms.ToTensor(),
+        ])
+
+    train_data = torchvision.datasets.ImageFolder(root=train_data_path, transform=train_transform)
+    train_data_loader = torch.utils.data.DataLoader(train_data, batch_size=batch_size, shuffle=True)
+
+    test_data = torchvision.datasets.ImageFolder(root=test_data_path, transform=test_transform)
+    test_data_loader  = torch.utils.data.DataLoader(test_data, batch_size=batch_size, shuffle=True)
+
+    validation_data = torchvision.datasets.ImageFolder(root=validation_data_path, transform=test_transform)
+    validation_data_loader  = torch.utils.data.DataLoader(validation_data, batch_size=batch_size, shuffle=True) 
     
-    print('Download successful. Unzipping data')
-    os.system(f"unzip -n -q dogImages.zip")
-    print('Unzipping succesfull')
+    return train_data_loader, test_data_loader, validation_data_loader
 
-def create_metadata(database_path):
-    with open(os.path.join(database_path, 'meta.csv'), 'w', encoding='UTF8') as output_file:
-        writer = csv.writer(output_file)
-        writer.writerow(['Id', 'Filename'])
-        for root, dirs, files in os.walk(database_path):
-            files.sort()
-            for file in files:
-                if file.lower().endswith('.jpg'):
-                    classification_id = int(root.split("/")[2].split(".")[0])-1
-                    rel_path = os.path.join(root, file)
-                    row = [classification_id, rel_path]
-                    writer.writerow(row)
-    print('Creating metadata completed for file', os.path.join(database_path, 'meta.csv'))
-      
 def main(args):
-    '''
-    Initialize pretrained model
-    '''    
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    print(f"Running on Device {device}")
+    print(f'Hyperparameters: LR: {args.lr}, Batch Size: {args.batch_size}')
+    print(f'Database Path: {args.data_path}')
     
-    model=create_pretrained_model()
-    model.to(device)
     '''
     Create data loaders
-    '''
-    load_data()
-    create_metadata('dogImages/test')
-    create_metadata('dogImages/train')
-    create_metadata('dogImages/valid')
-    mean = [0.485, 0.456, 0.406]
-    std = [0.229, 0.224, 0.225]
-    image_transform = transforms.Compose([
-        transforms.Resize([256, ]),
-        transforms.CenterCrop(224),
-        transforms.ConvertImageDtype(torch.float),
-        transforms.Normalize(mean=mean, std=std)])
-    train_data = DogBreedDataset(annotations_file = 'dogImages/train/meta.csv', base_dir = '.', transform = image_transform)
-    test_data = DogBreedDataset(annotations_file = 'dogImages/test/meta.csv', base_dir = '.', transform = image_transform)
-    valid_data = DogBreedDataset(annotations_file = 'dogImages/valid/meta.csv', base_dir = '.', transform = image_transform)
-
-    train_loader = DataLoader(train_data, batch_size=args.batch_size, shuffle=True)
-    test_loader = DataLoader(test_data, batch_size=args.batch_size, shuffle=True)
-    valid_loader = DataLoader(valid_data, batch_size=args.batch_size, shuffle=True)
+    '''    
+    train_loader, test_loader, validation_loader=create_data_loaders(args.data_path, args.batch_size)
     
-    image_dataset_loaders={'train':train_loader, 'valid':valid_loader}
+    '''
+    Initialize pretrained model
+    '''
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    print(f"Running on Device {device}")
+    model=create_pretrained_model()
+    model.to(device)
     
     '''
     Create loss and optimizer
     '''
-    loss_criterion = nn.CrossEntropyLoss()
+    criterion = nn.CrossEntropyLoss(ignore_index=133)
     optimizer = optim.Adam(model.fc.parameters(), lr=args.lr)
     
     '''
     Call the train function to start training model
     '''
-    model=train(model, image_dataset_loaders, loss_criterion, optimizer, device)
+    print("Starting Model Training")
+    model=train(model, train_loader, validation_loader, criterion, optimizer, device)
     
     '''
     Test the model to see its accuracy
-    '''
-    test(model, test_loader, loss_criterion, device)
+    '''    
+    print("Testing Model")
+    test(model, test_loader, criterion, device)
     
     '''
     Save the trained model
-    '''
-    torch.save(model.state_dict(), "dog_breed.pt")
-
+    '''    
+    print("Saving Model")
+    torch.save(model.cpu().state_dict(), os.path.join(args.model_dir, "model.pth"))
+    
+    
 if __name__=='__main__':
-    parser=argparse.ArgumentParser()
     '''
     All the hyperparameters needed to use to train your model.
     '''
@@ -229,6 +230,11 @@ if __name__=='__main__':
     parser.add_argument(
         "--lr", type=float, default=1.0, metavar="LR", help="learning rate (default: 1.0)"
     )
+    parser.add_argument('--data_path', type=str, default=os.environ['SM_CHANNEL_TRAINING'])
+    parser.add_argument('--model_dir', type=str, default=os.environ['SM_MODEL_DIR'])
+    
     args = parser.parse_args()
+    print(args)
     
     main(args)
+    
