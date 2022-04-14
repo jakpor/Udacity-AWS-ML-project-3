@@ -3,6 +3,8 @@ Use AWS Sagemaker to train a pretrained model that can perform image classificat
 
 Selected dataset: dog breed classication avaiable [here](https://s3-us-west-1.amazonaws.com/udacity-aind/dog-project/dogImages.zip)
 
+Main project file is Notebook: [`train_and_deploy.ipynb`](train_and_deploy.ipynb), which contains an example successful output for each command.
+
 ## Project Set Up and Installation
 Enter AWS through the gateway in the course and open SageMaker Studio. 
 Download the starter files.
@@ -62,11 +64,9 @@ Learning parameters decreased over time as presented in figure below:
 ![Plot of cross entropy over debug samples](training_debug_values.png "Plot of cross entropy over debug samples")
 
 ## Model Deployment
-In order to deploy a model one has to run command:
-`predictor = tuner.deploy(initial_instance_count=1, instance_type="ml.m5.xlarge")`
-which will create an endpoint useful for predictions:
-`response = predictor.predict(image)`
-Input image should be preprocessed - i.e. resized to 224x224 image and normalized to match the dataset data. Example of preprocessing procedure is presented in Notebook [`train_and_deploy.ipynb`](train_and_deploy.ipynb). The inference should work, but it was aborted due to some latency issues. After facing multiple problems with the AWS cloud I don't know if this is caused by my mistake in the ocde or by the cloud itself. 
+In order to deploy we need to create additional entrypoint for the network to load and preprocess image. These operations are included in `inference.py` file.
+Example of preprocessing procedure is presented in Notebook [`train_and_deploy.ipynb`](train_and_deploy.ipynb). 
+The trained model return correct results for the test image.
 
 A screenshot of the deployed active endpoint in Sagemaker.
 ![A screenshot of the deployed endpoint](deployed_endpoint.png "A screenshot of the deployed endpoint")
